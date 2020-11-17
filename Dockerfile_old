@@ -1,0 +1,117 @@
+FROM debian:latest
+
+LABEL org.label-schema.license="GPL-2.0"
+
+MAINTAINER Harish <ramani.h@northeastern.edu>
+
+ARG USER_HOME_DIR="/root"
+ARG SHA=ce50b1c91364cb77efe3776f756a6d92b76d9038b0a0782f7d53acf1e997a14d
+
+## Make sure we have a proper user with a home directory
+RUN useradd docker \
+	&& mkdir /home/docker \
+	&& chown docker:docker /home/docker \
+	&& addgroup docker staff
+
+## Install packages needed by various parts
+RUN apt-get update && apt-get install -y \
+  ed less gnupg2 locales vim-tiny curl wget python3-pip \
+  libxml2-dev libxml2-utils ca-certificates fonts-texgyre sysstat cmake
+
+
+## Configure default locale, see https://github.com/rocker-org/rocker/issues/19
+RUN echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen \
+	&& locale-gen en_US.utf8 \
+	&& /usr/sbin/update-locale LANG=en_US.UTF-8
+
+ENV LC_ALL en_US.UTF-8
+ENV LANG en_US.UTF-8
+
+RUN gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv C2518248EEA14886
+
+RUN apt-get -qq update \
+    && apt-get -qq install dialog apt-utils -y \
+    && apt-get install apt-transport-https -y \
+    && apt-get install -qq software-properties-common -y
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get install libssl-dev -y \
+    && apt-get install libgmp3-dev  -y --allow-unauthenticated \
+    && apt-get install git -y \
+    && apt-get install build-essential  -y --allow-unauthenticated \
+    && apt-get install libv8-dev  -y --allow-unauthenticated \
+    && apt-get install libcurl4-openssl-dev -y --allow-unauthenticated \
+    && apt-get install libcurl3 -y --allow-unauthenticated \
+    && apt-get install libjpeg8 -y --allow-unauthenticated \
+    && apt-get install libpng12-0 -y --allow-unauthenticated \
+    && apt-get install libreadline6 -y --allow-unauthenticated 
+RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
+RUN add-apt-repository 'deb https://cloud.r-project.org/bin/linux/ubuntu xenial-cran35/'
+RUN apt update
+## Now install R and littler, and create a link for littler in /usr/local/bin
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends \
+		littler \
+                r-cran-littler \
+                r-base-core -f \
+		r-base \
+	&& ln -s /usr/lib/R/site-library/littler/examples/install.r /usr/local/bin/install.r \
+	&& ln -s /usr/lib/R/site-library/littler/examples/install2.r /usr/local/bin/install2.r \
+	&& ln -s /usr/lib/R/site-library/littler/examples/installGithub.r /usr/local/bin/installGithub.r \
+	&& ln -s /usr/lib/R/site-library/littler/examples/testInstalled.r /usr/local/bin/testInstalled.r \
+	&& install.r docopt \
+	&& rm -rf /tmp/downloaded_packages/ /tmp/*.rds \
+	&& rm -rf /var/lib/apt/lists/*
+
+
+# Install R-dependencies for CDT package.
+RUN Rscript -e 'install.packages("usethis",repos="http://cran.us.r-project.org", quiet=TRUE, verbose=FALSE)'
+RUN Rscript -e 'library(usethis); browse_github_pat(scopes = c("repo", "gist"), description = "R:GITHUB_PAT", host = "https://github.com")'
+RUN echo -e "GITHUB_PAT=$GITHUB_PAT\n" > ~/.Renviron
+RUN Rscript -e 'install.packages(c("curl","V8", "usethis", "sfsmisc", "clue", "randomForest", "lattice", "devtools", "MASS", "sparsebn"),repos="http://cran.us.r-project.org", quiet=TRUE, verbose=FALSE)'
+RUN Rscript -e 'install.packages("BiocManager")'
+RUN Rscript -e 'BiocManager::install(c("CAM", "SID", "bnlearn", "pcalg", "kpcalg", "D2C"))'
+RUN Rscript -e 'install.packages("devtools")'
+RUN Rscript -e 'devtools::install_github("cran/CAM"); devtools::install_github("cran/momentchi2"); devtools::install_github("Diviyan-Kalainathan/RCIT", quiet=TRUE, verbose=FALSE)'
+
+## Install PIP3
+RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+RUN python3 get-pip.py
+
+# Install Java
+#RUN apt install default-jre
+#RUN apt install default-jdk
+
+
+## make sure Java can be found in rApache and other daemons not looking in R ldpaths
+#RUN echo "/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/amd64/server/" > /etc/ld.so.conf.d/rJava.conf
+#RUN /sbin/ldconfig
+
+## set up java environment variable
+#ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64
+#ENV JRE_HOME /usr/lib/jvm/java-8-openjdk-amd64/jre
+
+
+## Install rJava package
+#RUN install2.r --error rJava \
+#  && rm -rf /tmp/downloaded_packages/ /tmp/*.rds
+
+
+
+COPY . /build
+WORKDIR /build
+# Separely split pip to avoid pip install main issue
+RUN pip3 install --upgrade pip
+RUN apt-get update &&\
+    apt-get install -y libpq-dev python3-dev &&\
+    pip3 install wheel &&\
+    pip3 install setuptools &&\
+    pip3 install -r dependencies.txt&&\
+    jupyter contrib nbextension install --user
+ENV PYTHONPATH="/mnt:${PYTHONPATH}" 
+WORKDIR /mnt
+RUN rm -rf /build
+
+
+
